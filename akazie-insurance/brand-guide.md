@@ -27,11 +27,17 @@ Traits: **clear-headed, warmly direct, quietly confident, un-jargony.**
 
 ## Logo
 
-No logo file was supplied with this request. The guide uses a placeholder
-"horizon shield" mark — a shield silhouette with a horizon line and a
-single beacon dot — so clearspace, minimum-size, and misuse rules have
-something concrete to attach to. Replace with the real logo when
-available; the surrounding rules carry over unchanged.
+The supplied mark: a circular canopy built from overlapping leaf-strokes
+that never quite close, roots below and growth above. Supplied in gold;
+that color is retired in favor of the brand's two working colorways:
+
+- **Ink on Fog** — primary
+- **Paper on Ink** — reversed, for dark sections
+
+Minimum size ~20px (below that the interior gaps close up and it reads
+as a solid blob). Clearspace on every side equals the width of one
+canopy gap. Never stretch, skew, recolor outside ink/paper, or add
+outlines/shadows/gradients.
 
 ## Color
 

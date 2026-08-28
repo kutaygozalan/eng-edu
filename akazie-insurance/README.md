@@ -17,11 +17,9 @@ Rendered, interactive versions of both documents:
 Plain-text summaries of both are in this folder (`brand-guide.md`,
 `sitemap.md`) for anyone without artifact access.
 
-## Open item: logo
+## Logo
 
-No logo image file came through with this request — only the Word
-document of notes was received, and it contains text and hyperlinks
-only, no embedded images. The brand guide currently uses a placeholder
-"horizon shield" mark (clearly flagged as such) so the rest of the guide
-has something concrete to reference. Send the actual logo file and the
-guide's logo section can be swapped to match it directly.
+The real logo (a circular tree/canopy mark, supplied as a PDF) is now
+incorporated into the brand guide's Logo section, recolored to the
+brand's ink/paper palette per instruction (the original gold was
+dropped). See `brand-guide.md` for the colorway and usage rules.
