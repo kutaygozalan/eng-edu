@@ -7,7 +7,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'AKAZIE_VERSION', '1.0.0' );
+define( 'AKAZIE_VERSION', '1.1.0' );
 
 require get_template_directory() . '/inc/site-data.php';
 require get_template_directory() . '/inc/icons.php';
@@ -199,3 +199,122 @@ function akazie_handle_lead_form() {
 }
 add_action( 'admin_post_nopriv_akazie_lead_form', 'akazie_handle_lead_form' );
 add_action( 'admin_post_akazie_lead_form', 'akazie_handle_lead_form' );
+
+/**
+ * Auto-provisioning: creates every page the theme's templates and nav expect
+ * (Home, the coverage hubs, every product, Get a Quote, Claims, Why Akazie,
+ * Contact, Learning Center, legal pages), assigns the matching template to
+ * each, sets Reading settings so Home/Learning Center work, and builds a
+ * Primary nav menu — so a fresh WordPress install works immediately after
+ * activation instead of 404ing until someone manually creates ~30 pages.
+ *
+ * Idempotent and additive only: matches existing pages by slug (never
+ * duplicates or overwrites content) and only touches Reading settings /
+ * the primary menu location if they're still unset. Runs once, gated by
+ * the 'akazie_provisioned' option — safe to leave in place permanently.
+ */
+function akazie_provision_content() {
+	if ( get_option( 'akazie_provisioned' ) ) {
+		return;
+	}
+
+	$ensure_page = function( $slug, $title, $template = '' ) {
+		$page = get_page_by_path( $slug );
+		if ( $page ) {
+			$id = $page->ID;
+		} else {
+			$id = wp_insert_post( array(
+				'post_title'  => $title,
+				'post_name'   => $slug,
+				'post_type'   => 'page',
+				'post_status' => 'publish',
+			) );
+		}
+		if ( $id && ! is_wp_error( $id ) && $template ) {
+			update_post_meta( $id, '_wp_page_template', $template );
+		}
+		return is_wp_error( $id ) ? 0 : (int) $id;
+	};
+
+	$home_id     = $ensure_page( 'home', 'Home' );
+	$learning_id = $ensure_page( 'learning-center', 'Learning Center' );
+	$ensure_page( 'get-a-quote', 'Get a Quote', 'page-templates/template-quote.php' );
+	$ensure_page( 'claims', 'Claims', 'page-templates/template-claims.php' );
+	$ensure_page( 'why-akazie', 'Why Akazie', 'page-templates/template-about.php' );
+	$ensure_page( 'contact', 'Contact', 'page-templates/template-contact.php' );
+	$ensure_page( 'client-portal', 'Client Portal' );
+	$ensure_page( 'privacy-policy', 'Privacy Policy' );
+	$ensure_page( 'terms-of-use', 'Terms of Use' );
+	$ensure_page( 'accessibility', 'Accessibility Statement' );
+
+	$coverage = akazie_coverage_data();
+	$hub_ids  = array();
+	foreach ( $coverage as $slug => $hub ) {
+		$hub_ids[ $slug ] = $ensure_page( $slug, $hub['label'], 'page-templates/template-coverage-hub.php' );
+		foreach ( $hub['products'] as $product ) {
+			$ensure_page( $product['slug'], $product['name'], 'page-templates/template-coverage-product.php' );
+		}
+	}
+
+	// Only set Reading options if the site doesn't already have a real front page configured.
+	if ( 'page' !== get_option( 'show_on_front' ) && ! get_option( 'page_on_front' ) ) {
+		update_option( 'show_on_front', 'page' );
+		update_option( 'page_on_front', $home_id );
+		update_option( 'page_for_posts', $learning_id );
+	}
+
+	// Only build a menu if nothing is already assigned to the primary location.
+	$locations = get_nav_menu_locations();
+	if ( empty( $locations['primary'] ) ) {
+		$menu_id = wp_create_nav_menu( 'Primary' );
+		$pos     = 1;
+		foreach ( $coverage as $slug => $hub ) {
+			if ( empty( $hub_ids[ $slug ] ) ) {
+				continue;
+			}
+			$parent_item_id = wp_update_nav_menu_item( $menu_id, 0, array(
+				'menu-item-title'     => $hub['label'],
+				'menu-item-object'    => 'page',
+				'menu-item-object-id' => $hub_ids[ $slug ],
+				'menu-item-type'      => 'post_type',
+				'menu-item-status'    => 'publish',
+				'menu-item-position'  => $pos++,
+			) );
+			foreach ( $hub['products'] as $product ) {
+				$product_page = get_page_by_path( $product['slug'] );
+				if ( ! $product_page ) {
+					continue;
+				}
+				wp_update_nav_menu_item( $menu_id, 0, array(
+					'menu-item-title'     => $product['name'],
+					'menu-item-object'    => 'page',
+					'menu-item-object-id' => $product_page->ID,
+					'menu-item-type'      => 'post_type',
+					'menu-item-status'    => 'publish',
+					'menu-item-parent-id' => $parent_item_id,
+					'menu-item-position'  => $pos++,
+				) );
+			}
+		}
+		foreach ( array( 'claims' => 'Claims', 'why-akazie' => 'Why Akazie', 'learning-center' => 'Learning Center' ) as $slug => $label ) {
+			$page = get_page_by_path( $slug );
+			if ( ! $page ) {
+				continue;
+			}
+			wp_update_nav_menu_item( $menu_id, 0, array(
+				'menu-item-title'     => $label,
+				'menu-item-object'    => 'page',
+				'menu-item-object-id' => $page->ID,
+				'menu-item-type'      => 'post_type',
+				'menu-item-status'    => 'publish',
+				'menu-item-position'  => $pos++,
+			) );
+		}
+		$locations['primary'] = $menu_id;
+		set_theme_mod( 'nav_menu_locations', $locations );
+	}
+
+	update_option( 'akazie_provisioned', AKAZIE_VERSION );
+}
+add_action( 'after_switch_theme', 'akazie_provision_content' );
+add_action( 'admin_init', 'akazie_provision_content' );

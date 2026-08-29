@@ -16,29 +16,16 @@ screenshotted, not just written and assumed to work.
 
 1. Zip this `akazie` folder and upload it under **Appearance → Themes → Add New → Upload Theme**, or drop it into `wp-content/themes/` directly.
 2. Activate it.
-3. That's it for a first look — the header/nav has a built-in fallback menu built from the coverage data below, so the mega-menu works immediately even before you build a menu in Appearance → Menus.
 
-## Set up content (10 minutes)
+That's it. Activating the theme automatically creates every page it needs (Home, the three coverage hubs, all ~24 product pages, Get a Quote, Claims, Why Akazie, Contact, Learning Center, and basic legal pages), assigns the correct template to each, sets Home/Learning Center as the front page and posts page under Settings → Reading, and builds a full Personal/Business/Specialty mega-menu assigned to the Primary Navigation location — so `/auto-insurance/`, `/get-a-quote/`, etc. all work immediately, with no manual page-building required.
 
-The theme ships with page **templates**, not the pages themselves — create these under **Pages → Add New**, and assign the matching template in the block editor's sidebar ("Template"):
+This runs once (it's tracked by the `akazie_provisioned` option) and only *adds* — it matches existing pages by slug rather than creating duplicates, and it only touches Reading settings or the primary menu location if they're still unset, so it's safe to leave in place even if you're updating an already-customized site.
 
-| Page title | Slug | Template |
-|---|---|---|
-| Home | `home` | — (leave default; `front-page.php` renders the homepage automatically) |
-| Personal Insurance | `personal-insurance` | Coverage Hub |
-| Business Insurance | `business-insurance` | Coverage Hub |
-| Specialty Insurance | `specialty-insurance` | Coverage Hub |
-| Get a Quote | `get-a-quote` | Get a Quote |
-| Claims | `claims` | Claims |
-| Why Akazie | `why-akazie` | Why Akazie |
-| Contact | `contact` | Contact |
-| Learning Center | `learning-center` | — (default; see below) |
+**If you installed an earlier version of this theme before this existed** (pages 404 despite the theme being active): update to this version and reload any `/wp-admin/` page once — provisioning also runs on `admin_init`, so it self-heals on the next admin page load without needing to reactivate. If your host still shows 404s afterward, visit **Settings → Permalinks** and click **Save Changes** once to flush rewrite rules.
 
-Then, individual coverage pages (Auto, Home, General Liability, etc.) — create one page per product with **Template: Coverage Product** and a slug matching the `slug` field in `inc/site-data.php` (e.g. `auto-insurance`, `home-insurance`). The hub pages, the footer, and the fallback nav all link to these by slug automatically.
+## Customize the navigation (optional)
 
-**Homepage & blog:** Settings → Reading → "Your homepage displays" → *A static page* → set **Homepage** to your `Home` page and **Posts page** to `Learning Center`. (`front-page.php` will still render the marketing homepage regardless of this setting, but WordPress needs a real front-page assignment for the Posts-page split to work — that's a WordPress quirk, not a theme requirement.)
-
-**Menu:** Appearance → Menus → build a menu with Personal/Business/Specialty Insurance as parent items and their products nested underneath — the theme walker turns any top-level item with children into a mega-menu column automatically. Assign it to the **Primary Navigation** location. Skip this and the built-in fallback keeps working.
+The auto-built menu is a normal WordPress menu — edit it like any other under **Appearance → Menus**. Any top-level item with children automatically renders as a mega-menu column (the custom nav walker in `functions.php` handles that), so you can freely add, remove, or reorder items without touching code.
 
 ## Editable content without touching code
 
