@@ -1,0 +1,30 @@
+[project]
+name = "tagent"
+version = "0.1.0"
+description = "A scheduled LLM trading agent with persistent, evidence-gated memory"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+alpaca = ["alpaca-py>=0.30"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+tagent = "tagent.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tagent = ["memory/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,72 @@
+# Trading agent configuration.
+#
+# Risk limits live here, in version control, so changing them is a reviewable
+# diff. Secrets never live here - they come from the environment.
+
+db_path: ./data/tagent.db
+
+# Master safety switch. While true, the agent reasons, proposes, and records
+# every decision to the ledger, but places NO orders. Leave it true until the
+# paper-trading track record justifies otherwise.
+dry_run: true
+
+broker:
+  kind: paper                 # paper | alpaca | robinhood_mcp
+  paper: true
+  # Robinhood agentic MCP. OAuth is completed once in a browser; the encrypted
+  # token file lives outside the repo and must stay read-write for refresh.
+  mcp_url: https://agent.robinhood.com/mcp/trading
+  token_file: ~/.tagent/robinhood-tokens.enc
+
+limits:
+  # Sizing is measured on MAX LOSS, not notional, so a defined-risk spread is
+  # sized by what it can actually cost you.
+  max_position_pct: 0.02        # 2% of equity at risk per position
+  max_symbol_pct: 0.05          # 5% aggregate per underlying
+  max_deployed_pct: 0.40        # 40% of equity deployed at once
+
+  daily_loss_limit_pct: 0.03    # stop trading after a 3% down day
+  max_drawdown_pct: 0.15        # peak-to-trough kill switch
+
+  # Trade frequency is the most reliable predictor of retail underperformance
+  # in the literature. These caps are deliberately tight.
+  max_trades_per_day: 8
+  max_trades_per_cycle: 2
+
+  min_edge_cost_multiple: 2.0   # expected edge must be >= 2x round-trip cost
+  max_spread_pct: 0.05
+
+  min_dte: 20                   # no 0DTE; the retail data on it is damning
+  require_defined_risk: true
+
+  entry_blackout_minutes_open: 15
+  entry_blackout_minutes_close: 20
+  max_data_age_seconds: 120
+  allow_reentry_same_day: false
+
+agent:
+  model: claude-opus-5
+  interval_minutes: 20
+  max_context_lessons: 25
+  max_similar_decisions: 5
+
+  # Start narrow. A wide universe multiplies the number of ways to be wrong
+  # without multiplying edge.
+  universe:
+    - SPY
+    - QQQ
+    - IWM
+
+  # Named strategy families. Every decision must declare one, which is what
+  # makes per-setup expectancy measurable at all.
+  setups:
+    - put_credit_spread
+    - call_credit_spread
+    - iron_condor
+    - covered_call
+
+alerts:
+  on_auth_expired: true
+  on_kill_switch: true
+  on_gate_reject_streak: 5
+  webhook_env_var: TAGENT_ALERT_WEBHOOK

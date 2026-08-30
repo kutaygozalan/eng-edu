@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Wrapper used by cron. Fails loudly: a trading agent that dies quietly is worse
+# than one that never ran.
+set -Eeuo pipefail
+
+DATA_DIR="${TAGENT_DATA:-/opt/tagent/data}"
+CONFIG="${TAGENT_CONFIG:-/opt/tagent/config.yaml}"
+
+on_error() {
+    local code=$?
+    local msg="tagent '$*' failed with exit $code on $(hostname) at $(date -Is)"
+    echo "$msg" >&2
+    if [[ -n "${TAGENT_ALERT_WEBHOOK:-}" ]]; then
+        curl -fsS -m 10 -X POST "$TAGENT_ALERT_WEBHOOK" \
+             -H 'Content-Type: application/json' \
+             -d "$(printf '{"text":%s}' "$(printf '%s' "$msg" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
+             || echo "alert webhook failed" >&2
+    fi
+    exit "$code"
+}
+trap 'on_error "$@"' ERR
+
+exec docker run --rm \
+    -v "$DATA_DIR:/data" \
+    -v "$CONFIG:/app/config.yaml:ro" \
+    -e ANTHROPIC_API_KEY \
+    -e TAGENT_ALERT_WEBHOOK \
+    tagent:latest "$@" --config /app/config.yaml
