@@ -119,6 +119,32 @@ this output.** If `place_order` bound to something that isn't an equity order
 tool, pin the correct names under `broker.tool_overrides` in config before going
 further. Robinhood has changed this surface twice since May.
 
+### The smoke test: one real order, by hand
+
+`discover` tells you what the binding *resolved to*. It does not prove the
+binding is right. Only an order that goes out and comes back as a fill does
+that, and until one has, nothing has verified that `place_order` reaches what
+you think it reaches.
+
+```bash
+# dry_run: false in config first, or this only prints what it would do
+tagent --config /opt/tagent/config.yaml order F --dollars 50
+tagent --config /opt/tagent/config.yaml cycle     # reconciles the fill
+tagent --config /opt/tagent/config.yaml status    # the lot should be there
+```
+
+It prints the quote, the notional as a percentage of equity, and the spread,
+then requires you to type the order back before sending. Note the sizing floor:
+`--dollars 10` buys nothing at all if the share price is above $10, and it will
+tell you so rather than silently rounding to zero.
+
+**An operator order deliberately skips the risk gate.** The gate governs the
+agent — it is what stands between a persuasive thesis and a blown account, and
+it has no override path by design. A human typing a symbol is not what it
+defends against. The order *is* recorded in the ledger, so reconciliation books
+the fill and the outcome lands in the statistics, tagged `manual` so it never
+contaminates a real setup's measured expectancy.
+
 ## 6. Schedule
 
 ```bash
@@ -397,6 +423,7 @@ passes tests but fails health and confirm it rolls back and quarantines.
 | What does it know? | `tagent status` |
 | Did auth lapse? | `tagent health` (exit 2 = re-run `tagent auth`) |
 | Did limits break? | `tagent doctor --equity <current balance>` |
+| Does a real order work? | `tagent order F --dollars 50` — one order, by hand, before trusting the loop |
 | What would a remote session see? | `tagent telemetry` — redacted JSON, same as the published file |
 | Everything, money included | `tagent telemetry --include-financials` — local only; never publish this to a public repo |
 
