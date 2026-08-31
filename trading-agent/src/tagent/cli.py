@@ -312,6 +312,33 @@ def cmd_review(args) -> int:
             store.retire_lesson(lesson["id"], why)
             print(f"  retired lesson {lesson['id']}: {why}")
 
+    if not args.no_journal:
+        from .agent.journal import write_journal
+
+        equity_rows = store.closed_trades(since=since)
+        packet = R.ReviewPacket(
+            as_of=now.isoformat(),
+            closed_trades=equity_rows,
+            setup_stats=stats,
+            calibration=R.compute_calibration(rows),
+            top_rejections=R.rejection_summary(store.rejections(since)),
+            active_lessons=store.active_lessons(50),
+            equity_start=store.start_of_day_equity(since) or 0.0,
+            equity_end=store.peak_equity(),
+        )
+        jr = write_journal(
+            store=store, model=cfg.agent.model, api_key=cfg.anthropic_api_key,
+            packet=packet, stats=stats,
+        )
+        if jr.error:
+            print(f"  journal failed: {jr.error}")
+        else:
+            print(f"\n  {jr.summary}")
+            print(f"  lessons: {jr.written} written, {jr.refused} refused, "
+                  f"{jr.retired} retired")
+            for r in jr.refusals:
+                print(f"    refused: {r}")
+
     store.set_state("last_review", now.isoformat())
     store.log("info", "review_complete", f"{len(rows)} trades, {len(stats)} setups")
     return 0
@@ -385,7 +412,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("health", help="auth + broker check").set_defaults(fn=cmd_health)
     sub.add_parser("cycle", help="one trading cycle").set_defaults(fn=cmd_cycle)
-    sub.add_parser("review", help="nightly journal").set_defaults(fn=cmd_review)
+    rv = sub.add_parser("review", help="nightly journal")
+    rv.add_argument("--no-journal", action="store_true",
+                    help="statistics only; skip the LLM journal step")
+    rv.set_defaults(fn=cmd_review)
     sub.add_parser("status", help="what the agent knows").set_defaults(fn=cmd_status)
 
     k = sub.add_parser("kill", help="engage the kill switch")

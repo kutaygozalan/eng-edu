@@ -113,6 +113,13 @@ def resolve_tools(
     return bindings, missing
 
 
+def is_terminal(status: str) -> bool:
+    """Whether a broker order status means the order is done moving."""
+    return (status or "").lower() in {
+        "filled", "cancelled", "canceled", "rejected", "failed", "expired",
+    }
+
+
 def _num(d: dict, *keys: str, default: float = 0.0) -> float:
     """Brokers disagree about field naming; try several and coerce."""
     for k in keys:
@@ -241,19 +248,25 @@ class RobinhoodMCPBroker(Broker):
         ts = _parse_ts(q.get("updated_at") or q.get("timestamp") or q.get("time"))
         return Quote(symbol=symbol.upper(), bid=bid, ask=ask, last=last, ts=ts)
 
-    def open_orders(self) -> list[OrderResult]:
+    def all_orders(self) -> list[OrderResult]:
         rows = _rows(self._call("list_orders"), "orders", "results", "data")
-        return [
-            OrderResult(
-                broker_order_id=str(o.get("id") or o.get("order_id") or ""),
-                status=str(o.get("state") or o.get("status") or "unknown"),
-                filled_quantity=_num(o, "filled_quantity", "cumulative_quantity"),
-                filled_price=_num(o, "average_price", "filled_price") or None,
+        out: list[OrderResult] = []
+        for o in rows:
+            oid = str(o.get("id") or o.get("order_id") or "")
+            if not oid:
+                continue
+            out.append(
+                OrderResult(
+                    broker_order_id=oid,
+                    status=str(o.get("state") or o.get("status") or "unknown"),
+                    filled_quantity=_num(o, "filled_quantity", "cumulative_quantity"),
+                    filled_price=_num(o, "average_price", "filled_price") or None,
+                )
             )
-            for o in rows
-            if str(o.get("state") or o.get("status") or "").lower()
-            not in {"filled", "cancelled", "canceled", "rejected", "failed"}
-        ]
+        return out
+
+    def open_orders(self) -> list[OrderResult]:
+        return [o for o in self.all_orders() if not is_terminal(o.status)]
 
     # ------------------------------------------------------------- writing --
     def place_order(self, req: OrderRequest) -> OrderResult:

@@ -145,12 +145,12 @@ the gate just rejects everything.
 
 Be clear-eyed about the gap between "runs" and "complete":
 
-- **Outcome reconciliation.** Orders are recorded and submitted, but nothing yet
-  polls fills and writes the `outcomes` rows. Until that exists the learning
-  loop has no inputs — expectancy, calibration and lessons all stay empty. This
-  is the next thing to build, and the system does not actually learn without it.
-- **The review's LLM step.** `tagent review` computes statistics, blocks failing
-  setups and retires unsupported lessons today; the journal-writing call using
-  `REVIEW_SYSTEM_PROMPT` is not yet wired.
-- **A paper broker**, for testing the loop without touching a live account.
-- **Options.** Deliberately out of scope until the account can size them.
+- **A paper broker**, for exercising the loop without touching a live account.
+- **Options.** Deliberately out of scope until the account can size them
+  (`tagent doctor` enforces this).
+- **Intraday realized P&L** in the daily-loss check. The gate currently sees
+  unrealized P&L plus closed-lot totals; a day of many round trips is measured
+  slightly conservatively.
+- **The secondary news/politics agent.** The architecture is designed for it
+  (the intelligence layer proposes into the same risk gate) but no data feeds
+  are wired yet.

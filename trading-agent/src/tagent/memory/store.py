@@ -175,6 +175,145 @@ class Store:
             )
         ]
 
+    # ------------------------------------------------------- lots / recon --
+    def pending_orders(self) -> list[dict]:
+        """Submitted decisions whose fills may not be fully booked yet.
+
+        Includes orders already marked filled: a partial fill can complete
+        later, and the applied_quantity delta is what decides whether there is
+        anything new to book.
+        """
+        return [
+            dict(r)
+            for r in self._conn.execute(
+                """
+                SELECT d.id AS decision_id, d.broker_order_id, d.symbol,
+                       d.asset_class, d.side, d.quantity, d.limit_price,
+                       json_extract(d.features_json, '$.max_loss') AS max_loss,
+                       COALESCE(os.applied_quantity, 0) AS applied_quantity
+                FROM decisions d
+                LEFT JOIN order_state os
+                       ON os.broker_order_id = d.broker_order_id
+                WHERE d.broker_order_id IS NOT NULL
+                  AND d.status IN ('submitted','filled')
+                  AND COALESCE(os.status,'') NOT IN
+                      ('cancelled','canceled','rejected','failed','expired')
+                ORDER BY d.ts
+                """
+            )
+        ]
+
+    def upsert_order_state(
+        self, *, broker_order_id: str, decision_id: int, status: str,
+        filled_quantity: float, applied_quantity: float,
+        filled_price: float | None,
+    ) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO order_state (broker_order_id, decision_id, status,
+                                     filled_quantity, applied_quantity,
+                                     filled_price, last_seen_ts)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(broker_order_id) DO UPDATE SET
+                status=excluded.status,
+                filled_quantity=excluded.filled_quantity,
+                applied_quantity=excluded.applied_quantity,
+                filled_price=excluded.filled_price,
+                last_seen_ts=excluded.last_seen_ts
+            """,
+            (broker_order_id, decision_id, status, filled_quantity,
+             applied_quantity, filled_price, _iso()),
+        )
+
+    def open_lot(
+        self, *, decision_id: int, symbol: str, asset_class: str, direction: int,
+        quantity: float, entry_price: float, entry_ts: str, max_loss: float,
+    ) -> int:
+        cur = self._conn.execute(
+            """
+            INSERT INTO lots (decision_id, symbol, asset_class, direction,
+                              quantity_total, quantity_open, entry_price,
+                              entry_ts, max_loss)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (decision_id, symbol.upper(), asset_class, direction, quantity,
+             quantity, entry_price, entry_ts, max_loss),
+        )
+        return int(cur.lastrowid)
+
+    def open_lots(self, symbol: str) -> list:
+        from ..reconcile import Lot
+
+        return [
+            Lot(
+                id=r["id"], decision_id=r["decision_id"], symbol=r["symbol"],
+                direction=r["direction"], quantity_open=r["quantity_open"],
+                quantity_total=r["quantity_total"], entry_price=r["entry_price"],
+                entry_ts=r["entry_ts"], max_loss=r["max_loss"],
+                realized_pnl=r["realized_pnl"], fees=r["fees"],
+            )
+            for r in self._conn.execute(
+                "SELECT * FROM lots WHERE status='open' AND symbol=? "
+                "ORDER BY entry_ts",
+                (symbol.upper(),),
+            )
+        ]
+
+    def has_open_lots(self, symbol: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM lots WHERE status='open' AND symbol=? LIMIT 1",
+            (symbol.upper(),),
+        ).fetchone()
+        return row is not None
+
+    def symbols_with_open_lots(self) -> list[str]:
+        return [
+            r["symbol"]
+            for r in self._conn.execute(
+                "SELECT DISTINCT symbol FROM lots WHERE status='open'"
+            )
+        ]
+
+    def symbols_closed_today(self, day_start_iso: str) -> frozenset[str]:
+        """Symbols whose lots closed today - the gate's no-re-entry check."""
+        return frozenset(
+            r["symbol"]
+            for r in self._conn.execute(
+                "SELECT DISTINCT symbol FROM lots WHERE status='closed' "
+                "AND closed_ts >= ?",
+                (day_start_iso,),
+            )
+        )
+
+    def apply_close(
+        self, *, lot_id: int, quantity: float, pnl: float, closed: bool,
+        closed_ts: str, exit_reason: str,
+    ) -> None:
+        """Reduce a lot and accumulate its realized P&L.
+
+        quantity_open is decremented rather than set, so several partial closes
+        compose correctly. The outcome row is written by the caller only once
+        `closed` is true.
+        """
+        self._conn.execute(
+            """
+            UPDATE lots
+               SET quantity_open = MAX(0, quantity_open - ?),
+                   realized_pnl  = realized_pnl + ?,
+                   status        = CASE WHEN ? THEN 'closed' ELSE status END,
+                   closed_ts     = CASE WHEN ? THEN ? ELSE closed_ts END,
+                   exit_reason   = CASE WHEN ? THEN ? ELSE exit_reason END
+             WHERE id = ?
+            """,
+            (quantity, pnl, closed, closed, closed_ts, closed, exit_reason, lot_id),
+        )
+
+    def open_lot_count(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) c FROM lots WHERE status='open'"
+        ).fetchone()
+        return int(row["c"])
+
     # -------------------------------------------------------------- lessons --
     def active_lessons(self, limit: int = 40) -> list[dict]:
         return [

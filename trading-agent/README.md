@@ -4,8 +4,9 @@ A trading agent that wakes on a schedule during market hours, proposes trades,
 passes them through a deterministic risk gate, and keeps a journal it actually
 learns from.
 
-**Status: core built and tested (90 tests passing). Not yet wired to a live
-broker. `dry_run` defaults to true and should stay that way for months.**
+**Status: complete loop built and tested (148 tests passing) — proposal,
+risk gate, execution, outcome reconciliation, and nightly learning. Wired to
+Robinhood's agentic MCP server. `dry_run` defaults to true.**
 
 ---
 
@@ -61,12 +62,34 @@ journal that only grows becomes a list of superstitions.
 ```
 cron (every 20 min, 09:45–15:25 ET)
    │
-   ├─► cycle: load memory → assemble bounded context → LLM proposes
+   ├─► cycle: RECONCILE fills → load memory → bounded context → LLM proposes
    │            → RISK GATE (deterministic) → broker → ledger
    │
    └─► review (17:30 ET): recompute expectancy, update calibration,
                           write/retire lessons, block failing setups
 ```
+
+### How a trade becomes a lesson
+
+```
+decision ──fill──► lot ──close──► outcome ──nightly──► expectancy + calibration
+   │                │                                        │
+   │                └─ carries the OPENING decision_id        └─► journal
+   └─ rejected proposals are recorded too, and reviewed
+```
+
+The lot is what makes attribution work. An exit is not its own trade — it is the
+resolution of an earlier one — so P&L attributes back to the decision that
+*opened* the position. Without that, every exit looks like a fresh trade and
+per-setup expectancy is meaningless.
+
+`reconcile.py` survives the four things that actually happen in real accounts:
+partial fills, partial closes days apart, positions closed outside the agent
+(sold in the app, assigned), and being run every 20 minutes without ever
+double-booking a fill. It also holds a 5-minute grace period before judging a
+position "externally closed", because fills and positions come from different
+broker endpoints and do not update atomically — without it, a fresh fill gets
+closed as external microseconds later and fabricates an outcome.
 
 **One-shot invocations, not a long-running process.** The container starts, runs
 one cycle, writes to SQLite, and exits. Nothing survives in RAM — which is

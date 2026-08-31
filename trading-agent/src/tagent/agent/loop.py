@@ -34,6 +34,7 @@ from ..brokers.base import (
 )
 from ..config import Config
 from ..memory.store import Store
+from ..reconcile import reconcile
 from ..risk import gate as G
 from . import context as ctx
 from .prompts import SYSTEM_PROMPT, PROPOSAL_SCHEMA
@@ -81,6 +82,18 @@ def run_cycle(cfg: Config, store: Store, broker: Broker) -> CycleReport:
         reason = store.get_state("kill_switch_reason", "unknown")
         store.log("warn", "cycle_skipped", f"kill switch engaged: {reason}")
         report.skipped_reason = f"kill switch engaged: {reason}"
+        return report
+
+    # Reconcile FIRST. Fills from previous cycles become lots and outcomes here,
+    # so the account snapshot, the expectancy statistics and the churn check all
+    # reflect what actually happened rather than what we last intended.
+    try:
+        recon = reconcile(store, broker)
+        if recon.errors:
+            report.errors.extend(recon.errors)
+    except AuthExpired as exc:
+        store.log("critical", "auth_expired", str(exc))
+        report.errors.append(f"auth expired: {exc}")
         return report
 
     try:
@@ -432,7 +445,7 @@ def _account_state(
         symbol_exposure=account.exposure_by_symbol(),
         trades_today=store.trades_today(day_start),
         trades_this_cycle=0,
-        symbols_closed_today=frozenset(),
+        symbols_closed_today=store.symbols_closed_today(day_start),
     )
 
 

@@ -148,3 +148,50 @@ CREATE TABLE IF NOT EXISTS state (
     value      TEXT NOT NULL,
     updated_ts TEXT NOT NULL
 );
+
+-- -------------------------------------------------------------------- lots --
+-- Open exposure created by a filled decision, tracked until it is fully closed.
+--
+-- This table is what makes attribution possible. An `outcomes` row must point
+-- at the decision that OPENED the position, not the one that closed it -
+-- otherwise every exit looks like its own trade and per-setup expectancy is
+-- meaningless. A lot is the bridge: it carries the opening decision_id forward
+-- until the position is gone.
+--
+-- Lots close in FIFO order within a symbol, and may close across several
+-- partial fills, so realized_pnl accumulates and the outcome is written once,
+-- when quantity_open reaches zero.
+CREATE TABLE IF NOT EXISTS lots (
+    id             INTEGER PRIMARY KEY,
+    decision_id    INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+    symbol         TEXT    NOT NULL,
+    asset_class    TEXT    NOT NULL,
+    direction      INTEGER NOT NULL,          -- +1 long, -1 short
+    quantity_total REAL    NOT NULL,          -- as filled (may be < ordered)
+    quantity_open  REAL    NOT NULL,
+    entry_price    REAL    NOT NULL,
+    entry_ts       TEXT    NOT NULL,
+    max_loss       REAL    NOT NULL,          -- denominator for pnl_pct
+    realized_pnl   REAL    NOT NULL DEFAULT 0,
+    fees           REAL    NOT NULL DEFAULT 0,
+    status         TEXT    NOT NULL DEFAULT 'open'
+                   CHECK (status IN ('open','closed')),
+    closed_ts      TEXT,
+    exit_reason    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_lots_open   ON lots(status, symbol, entry_ts);
+CREATE INDEX IF NOT EXISTS idx_lots_decision ON lots(decision_id);
+
+-- ------------------------------------------------------------ order_state --
+-- Last observed broker state per submitted order. Reconciliation runs every
+-- cycle, so it must be idempotent: this table records how much of each order we
+-- have ALREADY accounted for, and only the delta is applied.
+CREATE TABLE IF NOT EXISTS order_state (
+    broker_order_id  TEXT PRIMARY KEY,
+    decision_id      INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+    status           TEXT NOT NULL,
+    filled_quantity  REAL NOT NULL DEFAULT 0,   -- as reported by the broker
+    applied_quantity REAL NOT NULL DEFAULT 0,   -- what we have already booked
+    filled_price     REAL,
+    last_seen_ts     TEXT NOT NULL
+);
