@@ -136,17 +136,23 @@ and alerts, rather than letting the agent discover it at 09:45.
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                                    # 90 tests
+pytest -q                                    # 238 tests
 
 cp config/config.example.yaml config.yaml    # edit limits + universe
-tagent cycle  --config config.yaml           # one cycle (dry_run)
-tagent review --config config.yaml           # nightly journal
-tagent health --config config.yaml           # broker/auth check
+tagent cycle     --config config.yaml        # one cycle (dry_run)
+tagent review    --config config.yaml        # nightly journal
+tagent health    --config config.yaml        # broker/auth check
+tagent telemetry --config config.yaml        # operational JSON, redacted
 ```
 
 Deployment lives in `deploy/`: a one-shot Dockerfile, a verified cron schedule,
 and a wrapper that alerts on failure — because an agent that dies quietly is
 worse than one that never ran.
+
+After the close the VM also maintains itself: it publishes redacted telemetry to
+an orphan `agent-status` branch, then pull-deploys any new commit — but only
+after proving it in a throwaway worktree, and rolling back if `health` fails.
+See `DEPLOY.md` section 9.
 
 ---
 

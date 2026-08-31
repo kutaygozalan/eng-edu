@@ -492,3 +492,43 @@ class Store:
                 "SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,)
             )
         ]
+
+    def recent_errors(self, limit: int = 10) -> list[dict]:
+        """Only the levels that mean something is wrong.
+
+        `data` is deliberately not selected: it carries raw model output and
+        order payloads, which must never reach a published telemetry file.
+        """
+        return [
+            dict(r)
+            for r in self._conn.execute(
+                "SELECT ts, level, kind, message FROM events "
+                "WHERE level IN ('error','critical') ORDER BY ts DESC LIMIT ?",
+                (limit,),
+            )
+        ]
+
+    def events_by_kind(self, since: str | None = None) -> list[dict]:
+        sql = "SELECT level, kind, COUNT(*) n FROM events"
+        params: tuple = ()
+        if since:
+            sql += " WHERE ts >= ?"
+            params = (since,)
+        sql += " GROUP BY level, kind ORDER BY n DESC, kind"
+        return [dict(r) for r in self._conn.execute(sql, params)]
+
+    # --------------------------------------------------------------- symbols --
+    def known_symbols(self) -> frozenset[str]:
+        """Every symbol this agent has ever touched.
+
+        Used by telemetry redaction: an exact list beats a regex guess at what
+        looks like a ticker.
+        """
+        return frozenset(
+            r["symbol"]
+            for r in self._conn.execute(
+                "SELECT DISTINCT symbol FROM decisions "
+                "UNION SELECT DISTINCT symbol FROM lots"
+            )
+            if r["symbol"]
+        )

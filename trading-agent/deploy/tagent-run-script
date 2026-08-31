@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Dispatcher for the deploy-side shell scripts, so a cron line reads
+#
+#     30 18 * * 1-5  /usr/local/bin/tagent-run-script pull-deploy
+#
+# instead of a path, an env-file source, and a redirect fighting for space in
+# one line. It does exactly two things: load the secrets file, and exec
+# deploy/<name>.sh.
+#
+# Note the division of labour: `tagent-run` runs the PYTHON cli (cycle, review,
+# health); this runs the SHELL scripts next to it (pull-deploy, publish-status).
+# They are separate because the shell scripts must keep working when the Python
+# install is the very thing that is broken.
+set -Eeuo pipefail
+
+TAGENT_HOME="${TAGENT_HOME:-/opt/tagent}"
+SCRIPT_DIR="${TAGENT_SCRIPT_DIR:-$TAGENT_HOME/trading-agent/deploy}"
+ENV_FILE="${TAGENT_ENV_FILE:-/etc/tagent.env}"
+
+name="${1:-}"
+if [[ -z "$name" ]]; then
+    echo "usage: tagent-run-script <name> [args...]" >&2
+    echo "available:" >&2
+    for f in "$SCRIPT_DIR"/*.sh; do
+        [[ -e "$f" ]] || continue
+        b=${f##*/}
+        echo "  ${b%.sh}" >&2
+    done
+    exit 64   # EX_USAGE
+fi
+shift
+
+# A name, not a path. Cron lines are trusted, but a dispatcher that will exec
+# whatever string it is handed is the kind of thing that turns one mistake into
+# an arbitrary-command bug, and the check costs one line.
+if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "invalid script name: $name (expected lowercase letters, digits, dashes)" >&2
+    exit 64
+fi
+
+target="$SCRIPT_DIR/$name.sh"
+if [[ ! -x "$target" ]]; then
+    echo "no executable script at $target" >&2
+    exit 78   # EX_CONFIG
+fi
+
+# Secrets come from the environment file only. Same reasoning as tagent-run: a
+# command line is world-readable through /proc, an 0600 env file is not.
+if [[ -r "$ENV_FILE" ]]; then
+    set -a; . "$ENV_FILE"; set +a
+else
+    echo "missing or unreadable $ENV_FILE" >&2
+    exit 78
+fi
+
+export TAGENT_HOME
+exec "$target" "$@"

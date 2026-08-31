@@ -16,5 +16,20 @@ CRON_TZ=America/New_York
 # learn at 8am rather than infer from a day of silence.
 0 8 * * 1-5             /usr/local/bin/tagent-run health >> /var/log/tagent/health.log 2>&1
 
+# ---------------------------------------------------------------- the loop --
+# Publish redacted telemetry, then pull and deploy. Both run after the close and
+# in that order, 45 minutes apart:
+#
+#   17:30  review     writes tonight's lessons and setup statistics
+#   17:45  publish    pushes what the review just produced to `agent-status`
+#   18:30  pull       deploys any new commit, having proved it first
+#
+# 17:45 is late enough that the review has finished and early enough that the
+# status file describes the commit that actually traded today, not the one
+# deployed 45 minutes later. The deploy goes last because it is the only job
+# here that can leave the box worse than it found it.
+45 17 * * 1-5           /usr/local/bin/tagent-run-script publish-status >> /var/log/tagent/publish.log 2>&1
+30 18 * * 1-5           /usr/local/bin/tagent-run-script pull-deploy    >> /var/log/tagent/deploy.log 2>&1
+
 # Note on half-days: the 13:00 ET closes are handled in code (clock.py), not
 # here. Cron still fires at 13:05 on those days; the cycle exits immediately.

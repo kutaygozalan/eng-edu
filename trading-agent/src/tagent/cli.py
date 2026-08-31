@@ -9,6 +9,7 @@ Subcommands are the operational surface:
     tagent cycle      one trading cycle (run every 20 minutes)
     tagent review     nightly journal (run after the close)
     tagent status     what the agent knows and has done
+    tagent telemetry  operational JSON, redacted for publication
     tagent kill       engage the kill switch
     tagent resume     release it (deliberately manual)
 """
@@ -370,6 +371,27 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_telemetry(args) -> int:
+    """Machine-readable operational state, safe to publish by default.
+
+    `status` is for a human at a terminal; this is for a future session reading
+    a file out of git with no shell access. The difference that matters is
+    redaction: see tagent/telemetry.py for why the default carries no money and
+    no symbols.
+    """
+    from . import telemetry
+
+    cfg = _load(args)
+    store = _store(cfg)
+    payload = telemetry.collect(
+        cfg, store,
+        include_financials=args.include_financials,
+        window_days=args.window_days,
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_kill(args) -> int:
     cfg = _load(args)
     store = _store(cfg)
@@ -417,6 +439,15 @@ def main(argv: list[str] | None = None) -> int:
                     help="statistics only; skip the LLM journal step")
     rv.set_defaults(fn=cmd_review)
     sub.add_parser("status", help="what the agent knows").set_defaults(fn=cmd_status)
+
+    tm = sub.add_parser("telemetry", help="operational JSON for publication")
+    tm.add_argument(
+        "--include-financials", action="store_true",
+        help="add P&L and equity. NOT safe to publish to a public repository.",
+    )
+    tm.add_argument("--window-days", type=int, default=7,
+                    help="lookback for event and rejection counts (default 7)")
+    tm.set_defaults(fn=cmd_telemetry)
 
     k = sub.add_parser("kill", help="engage the kill switch")
     k.add_argument("reason")
