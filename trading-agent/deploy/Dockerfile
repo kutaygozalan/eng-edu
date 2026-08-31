@@ -1,3 +1,7 @@
+# OPTIONAL alternative to the venv install in DEPLOY.md, which is the
+# supported path. Kept for containerized deployments; if you use this,
+# tagent-run must be adapted to `docker run` (it currently calls the venv).
+#
 # One-shot invocation image. The container starts, runs a single cycle, writes
 # everything it learned to the mounted volume, and exits. Nothing is held in
 # memory between cycles - that is what makes the agent's knowledge durable.

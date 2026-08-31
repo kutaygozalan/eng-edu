@@ -11,29 +11,32 @@ paste Robinhood credentials into a config file or a chat window is wrong.
 
 ## 1. Provision the VM
 
-**Recommended: GCP `e2-micro` in `us-east1`, always-free tier. $0/month.**
+**Recommended: Hetzner CPX11 in Ashburn, VA — ~$5/month, 2 vCPU, 2 GB.**
 
 A cycle peaks at **65 MB RSS** — measured, not estimated: interpreter, the
-Anthropic SDK, a 500-decision database, and full context assembly. Against
-1 GB that is comfortable with room to spare, and no swap is needed.
+Anthropic SDK, a 500-decision database, and full context assembly. Any of the
+options below clears that comfortably; the choice is about predictability.
 
-> An earlier draft of this file warned that a free `e2-micro` would OOM. That
-> came from a report of running **headless Claude Code** (Node plus the whole
-> agent harness) on one. `tagent cycle` is a lean one-shot Python process an
-> order of magnitude smaller. The warning does not apply here.
+> **On GCP's "free" tier:** the `e2-micro` instance is covered, but the external
+> IPv4 address it needs for outbound calls is not — that runs ~$0.005/hr, about
+> **$3.65/month**. There is no way around it: without an external IP the VM has
+> no internet egress, and Cloud NAT costs roughly $32/month. So GCP is ~$3.65,
+> not free, which makes Hetzner's extra ~$1.35 buy double the RAM and a
+> non-shared core.
 
-The workload is 7 short cycles a day, each spending most of its wall-clock
-waiting on an HTTP response. CPU is nearly irrelevant, so a shared-core
-instance is not a compromise. `us-east1` is closest to both Robinhood's and
-Anthropic's infrastructure.
+| Option | True cost | RAM | Notes |
+|---|---|---|---|
+| **Hetzner CPX11, Ashburn** | **~$5/mo** | **2 GB** | **Recommended.** IP included, 2 vCPU, predictable billing |
+| GCP `e2-micro` + external IP | ~$3.65/mo | 1 GB | Cheapest; `deploy/gcp-create-vm.sh` provisions it correctly |
+| DigitalOcean basic | $6/mo | 1 GB | Simplest UX |
+| Oracle Cloud always-free ARM | free | 24 GB | Genuinely free, but Oracle reclaims idle instances |
 
-| Option | Cost | Verdict |
-|---|---|---|
-| **GCP `e2-micro`, us-east1** | **free** | **Recommended.** Free tier covers 1 instance + 30 GB disk, non-preemptible |
-| Hetzner CPX11, Ashburn VA | ~$5/mo | Best paid option: 2 vCPU / 2 GB, US East |
-| DigitalOcean basic | $6/mo | Simplest UX; 1 GB at that price is fine here |
-| Oracle Cloud always-free ARM | free | 24 GB RAM, wildly overprovisioned; Oracle may reclaim idle instances |
-| AWS Lightsail | $5/mo | Fine, no advantage over the above |
+For GCP specifically, `deploy/gcp-create-vm.sh` creates the instance with **no
+service account and no API scopes** (the agent never calls GCP, so a compromise
+cannot pivot into your project), Shielded VM enabled, and **no inbound firewall
+rules at all** — SSH goes through IAP, so port 22 is never exposed. It also
+attaches a startup script that runs `bootstrap.sh` on first boot, and stops
+deliberately short of authorizing or scheduling anything.
 
 **Do not use a spot or preemptible instance.** Saving $3/month is not worth an
 instance vanishing mid-cycle with an order in flight.
