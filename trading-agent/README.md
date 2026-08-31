@@ -145,6 +145,11 @@ tagent health    --config config.yaml        # broker/auth check
 tagent telemetry --config config.yaml        # operational JSON, redacted
 ```
 
+Set `broker.kind: paper` to run the whole loop — fills, lots, outcomes, the
+nightly review — with no broker account and no money. Prices are synthetic and
+reproducible from a seed, so it exercises the ledger rather than predicting
+anything; keep its `db_path` separate from a live one.
+
 Deployment lives in `deploy/`: a one-shot Dockerfile, a verified cron schedule,
 and a wrapper that alerts on failure — because an agent that dies quietly is
 worse than one that never ran.

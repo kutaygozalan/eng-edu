@@ -29,6 +29,17 @@ class BrokerConfig:
     mcp_url: str = "https://agent.robinhood.com/mcp/trading"
     token_file: str = "~/.tagent/robinhood-tokens.enc"
 
+    # Paper broker only. Prices are synthetic and reproducible from the seed,
+    # so two boxes with the same seed see the same market. See brokers/paper.py
+    # for why this is a plumbing exercise and not a backtest.
+    paper_state_file: str = "~/.tagent/paper-state.json"
+    paper_seed: int = 7
+    paper_starting_cash: float = 2000.0
+    paper_spread_pct: float = 0.0008
+    paper_vol: float = 0.02               # rough daily swing, as a fraction
+    paper_settle_days: int = 1            # T+1, equities since May 2024
+    paper_base_prices: dict[str, float] = field(default_factory=dict)
+
 
 @dataclass(frozen=True)
 class AgentConfig:

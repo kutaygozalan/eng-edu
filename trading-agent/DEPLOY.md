@@ -178,6 +178,41 @@ drag and the calculus changes completely.
 
 ## 8. First week
 
+### Before real money: paper vs. dry_run
+
+These test different things, and it is worth being precise about which:
+
+| | What runs | What it proves |
+|---|---|---|
+| `dry_run: true` | reasoning, gate, ledger writes — **no orders** | the agent proposes sane trades and the gate rejects the right ones |
+| `broker.kind: paper` | everything, including fills | the **ledger** works: lots open, partial fills complete, closes attribute P&L back to the opening decision, the review has outcomes to learn from |
+
+`dry_run` never produces an `outcomes` row, so it never exercises
+reconciliation, expectancy, or calibration — the parts most likely to be
+subtly wrong. Paper does.
+
+```bash
+cp config/config.example.yaml paper.yaml   # set kind: paper, a separate db_path
+tagent --config paper.yaml health          # no OAuth needed
+tagent --config paper.yaml cycle
+tagent --config paper.yaml review
+tagent --config paper.yaml status
+```
+
+**Use a separate `db_path`.** Paper prices are synthetic noise, and the agent
+writes lessons and per-setup expectancy from whatever it trades. Sharing a
+database means carrying beliefs learned from a random number generator into the
+account with money in it. `tagent doctor` warns about this, and
+`tagent telemetry` reports `broker_kind` so you can tell the two apart.
+
+Two things paper is **not**: a backtest (there is no history, no earnings, no
+corporate actions — a P&L number from it means nothing), and a liquidity
+simulation (fills cross the spread, but queue priority is not modelled, so
+resting limit orders do better here than they would live).
+
+### Then the real thing
+
+
 Leave `dry_run: true`. The agent reasons, proposes, and records every decision
 and every gate rejection, but places no orders.
 
@@ -395,7 +430,6 @@ the gate just rejects everything.
 
 Be clear-eyed about the gap between "runs" and "complete":
 
-- **A paper broker**, for exercising the loop without touching a live account.
 - **Options.** Deliberately out of scope until the account can size them
   (`tagent doctor` enforces this).
 - **Intraday realized P&L** in the daily-loss check. The gate currently sees

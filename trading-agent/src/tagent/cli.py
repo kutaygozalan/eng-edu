@@ -49,7 +49,15 @@ def _broker(cfg: cfgmod.Config):
         client = MCPClient(cfg.broker.mcp_url, tokens, refresher=_make_refresher(cfg))
         return RobinhoodMCPBroker(client)
     if kind == "paper":
-        sys.exit("the paper broker is not implemented yet; use robinhood_mcp")
+        from .brokers.paper import PaperBroker
+
+        b = cfg.broker
+        return PaperBroker(
+            b.paper_state_file, seed=b.paper_seed,
+            starting_cash=b.paper_starting_cash, spread_pct=b.paper_spread_pct,
+            vol=b.paper_vol, settle_days=b.paper_settle_days,
+            base_prices=b.paper_base_prices,
+        )
     sys.exit(f"unknown broker kind: {kind}")
 
 
@@ -166,6 +174,14 @@ def cmd_doctor(args) -> int:
     print(f"broker:   {cfg.broker.kind} (dry_run={cfg.dry_run})")
     print(f"universe: {', '.join(cfg.agent.universe) or '(unrestricted)'}")
     print(f"setups:   {', '.join(cfg.agent.setups) or '(none)'}")
+
+    if cfg.broker.kind == "paper":
+        warnings.append(
+            "broker is `paper`: prices are synthetic, so nothing learned here "
+            "transfers to a live account. Keep db_path separate from the real "
+            "one, or the agent carries beliefs learned from a random number "
+            "generator into the account with money in it."
+        )
 
     if not cfg.agent.setups:
         problems.append("no setups configured; every proposal will be unattributable")
