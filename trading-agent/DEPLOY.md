@@ -44,15 +44,30 @@ trading an hour late twice a year.
 
 ## 2. Install
 
-```bash
-sudo apt-get update && sudo apt-get install -y python3-venv git
-git clone <your-repo> /opt/tagent && cd /opt/tagent/trading-agent
-python3 -m venv .venv && .venv/bin/pip install -e .
+One command does packages, clone, venv, test run, data directories, the
+secrets scaffold, and the cron wrapper:
 
-sudo mkdir -p /data /var/log/tagent
-sudo chown $USER /data /var/log/tagent
-cp config/config.small-account.yaml /opt/tagent/config.yaml
+```bash
+curl -fsSL https://raw.githubusercontent.com/kutaygozalan/eng-edu/\
+claude/robinhood-trading-bot-research-hrskq6/trading-agent/deploy/bootstrap.sh \
+  | bash
 ```
+
+Prefer to read it first (you should — it is a script that installs a thing that
+trades your money):
+
+```bash
+git clone -b claude/robinhood-trading-bot-research-hrskq6 \
+  https://github.com/kutaygozalan/eng-edu.git /opt/tagent
+less /opt/tagent/trading-agent/deploy/bootstrap.sh
+bash /opt/tagent/trading-agent/deploy/bootstrap.sh
+```
+
+It runs the test suite as part of setup and stops on failure. It **does not**
+authorize Robinhood, install cron, or place any order — those stay deliberate.
+It is safe to re-run: it will not overwrite an existing config or regenerate a
+token key over one already in use (which would make your stored Robinhood token
+permanently undecryptable).
 
 ## 3. Secrets — environment only, never the config file
 

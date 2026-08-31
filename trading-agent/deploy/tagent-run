@@ -1,28 +1,58 @@
 #!/usr/bin/env bash
-# Wrapper used by cron. Fails loudly: a trading agent that dies quietly is worse
-# than one that never ran.
+# Cron wrapper. Fails LOUDLY: a trading agent that dies quietly is worse than
+# one that never ran, because silence looks exactly like "no trades today".
 set -Eeuo pipefail
 
-DATA_DIR="${TAGENT_DATA:-/opt/tagent/data}"
-CONFIG="${TAGENT_CONFIG:-/opt/tagent/config.yaml}"
+TAGENT_HOME="${TAGENT_HOME:-/opt/tagent}"
+CONFIG="${TAGENT_CONFIG:-$TAGENT_HOME/config.yaml}"
+VENV="${TAGENT_VENV:-$TAGENT_HOME/trading-agent/.venv}"
+ENV_FILE="${TAGENT_ENV_FILE:-/etc/tagent.env}"
+
+alert() {
+    local msg="$1"
+    echo "$msg" >&2
+    [[ -n "${TAGENT_ALERT_WEBHOOK:-}" ]] || return 0
+    # Build the JSON with python so quotes and newlines in the message cannot
+    # break out of the payload.
+    local payload
+    payload=$(printf '%s' "$msg" | python3 -c \
+        'import json,sys; print(json.dumps({"text": sys.stdin.read()}))') || return 0
+    curl -fsS -m 10 -X POST "$TAGENT_ALERT_WEBHOOK" \
+         -H 'Content-Type: application/json' -d "$payload" >/dev/null \
+         || echo "alert webhook failed" >&2
+}
 
 on_error() {
     local code=$?
-    local msg="tagent '$*' failed with exit $code on $(hostname) at $(date -Is)"
-    echo "$msg" >&2
-    if [[ -n "${TAGENT_ALERT_WEBHOOK:-}" ]]; then
-        curl -fsS -m 10 -X POST "$TAGENT_ALERT_WEBHOOK" \
-             -H 'Content-Type: application/json' \
-             -d "$(printf '{"text":%s}' "$(printf '%s' "$msg" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
-             || echo "alert webhook failed" >&2
-    fi
+    alert "tagent ${1:-?} FAILED (exit $code) on $(hostname) at $(date -Is)"
     exit "$code"
 }
-trap 'on_error "$@"' ERR
+trap 'on_error "${1:-}"' ERR
 
-exec docker run --rm \
-    -v "$DATA_DIR:/data" \
-    -v "$CONFIG:/app/config.yaml:ro" \
-    -e ANTHROPIC_API_KEY \
-    -e TAGENT_ALERT_WEBHOOK \
-    tagent:latest "$@" --config /app/config.yaml
+# Secrets come from the environment file, never from config or the command line
+# (a command line is visible to every user on the box via /proc).
+if [[ -r "$ENV_FILE" ]]; then
+    set -a; . "$ENV_FILE"; set +a
+else
+    echo "missing or unreadable $ENV_FILE" >&2
+    exit 78   # EX_CONFIG
+fi
+
+[[ -x "$VENV/bin/tagent" ]] || { echo "tagent not installed at $VENV" >&2; exit 78; }
+
+# `|| rc=$?` rather than `set +e`: an ERR trap still fires under `set +e`
+# (bash only exempts if/while conditions and non-final parts of &&/|| lists),
+# so the generic handler would pre-empt the specific message below.
+rc=0
+"$VENV/bin/tagent" --config "$CONFIG" "$@" || rc=$?
+
+if [[ $rc -ne 0 ]]; then
+    if [[ "${1:-}" == "health" && $rc -eq 2 ]]; then
+        # OAuth lapsed. Needs a human with a browser, so say exactly that
+        # rather than emitting a generic failure someone has to decode.
+        alert "tagent: Robinhood OAuth has EXPIRED on $(hostname). Trading is halted until you run: tagent auth"
+    else
+        alert "tagent ${1:-?} exited $rc on $(hostname) at $(date -Is)"
+    fi
+fi
+exit $rc

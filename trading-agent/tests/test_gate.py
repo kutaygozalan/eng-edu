@@ -377,3 +377,60 @@ def test_precheck_agrees_with_the_gate():
             state, mkt, LIMITS, has_open_positions=False, min_viable_notional=1.0
         ).can_act
         assert not evaluate(proposal(), state, mkt, LIMITS).allowed
+
+
+# --------------------------------------------------- token store durability --
+# A Robinhood refresh token is single-use: the moment a new one is issued the
+# old one is dead. A write that fails silently therefore ends the session, so
+# these assert the failure is loud and explains itself.
+
+def test_token_store_roundtrip(tmp_path, monkeypatch):
+    import base64, os as _os, time
+    from tagent.mcp.tokens import EncryptedFileTokenStore, Tokens
+
+    monkeypatch.setenv(
+        "TAGENT_TOKEN_KEY",
+        base64.urlsafe_b64encode(_os.urandom(32)).decode(),
+    )
+    f = tmp_path / "tok.enc"
+    store = EncryptedFileTokenStore(f)
+    store.save(Tokens("secret-abc", "refresh-1", time.time() + 7200))
+
+    assert store.load().access_token == "secret-abc"
+    assert b"secret-abc" not in f.read_bytes()          # encrypted at rest
+    assert oct(f.stat().st_mode & 0o777) == "0o600"
+
+
+def test_token_store_fails_loudly_on_unwritable_path(tmp_path, monkeypatch):
+    import base64, os as _os, time
+    from tagent.mcp.tokens import EncryptedFileTokenStore, Tokens
+
+    monkeypatch.setenv(
+        "TAGENT_TOKEN_KEY",
+        base64.urlsafe_b64encode(_os.urandom(32)).decode(),
+    )
+    # A path whose parent cannot be created - stands in for a read-only mount,
+    # and unlike a chmod it fails for root too.
+    blocker = tmp_path / "afile"
+    blocker.write_text("not a directory")
+    store = EncryptedFileTokenStore(blocker / "sub" / "tok.enc")
+
+    with pytest.raises((RuntimeError, NotADirectoryError, FileExistsError)) as exc:
+        store.save(Tokens("a", "b", time.time() + 60))
+    if isinstance(exc.value, RuntimeError):
+        assert "read-only" in str(exc.value) or "could not write" in str(exc.value)
+
+
+def test_wrong_key_does_not_silently_return_garbage(tmp_path, monkeypatch):
+    import base64, os as _os, time
+    from tagent.mcp.tokens import EncryptedFileTokenStore, Tokens
+
+    monkeypatch.setenv("TAGENT_TOKEN_KEY",
+                       base64.urlsafe_b64encode(_os.urandom(32)).decode())
+    f = tmp_path / "tok.enc"
+    EncryptedFileTokenStore(f).save(Tokens("secret", "r", time.time() + 60))
+
+    monkeypatch.setenv("TAGENT_TOKEN_KEY",
+                       base64.urlsafe_b64encode(_os.urandom(32)).decode())
+    with pytest.raises(RuntimeError, match="decrypt"):
+        EncryptedFileTokenStore(f).load()

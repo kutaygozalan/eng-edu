@@ -100,21 +100,29 @@ class EncryptedFileTokenStore:
 
     def save(self, tokens: Tokens) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.exists() and not os.access(self.path, os.W_OK):
-            raise RuntimeError(
-                f"token file {self.path} is not writable. Refresh tokens are "
-                "single-use; a read-only mount will kill the session on first "
-                "refresh. Mount it read-write."
-            )
         nonce = os.urandom(12)
         ct = AESGCM(self._key()).encrypt(nonce, json.dumps(asdict(tokens)).encode(), None)
 
         # Atomic replace so a crash mid-write cannot leave a half-written file
         # that decrypts to nothing.
+        #
+        # The write is ATTEMPTED rather than pre-checked with os.access, which
+        # reports success for root and for read-only bind mounts alike. Since a
+        # Robinhood refresh token is single-use and the old one is dead the
+        # moment a new one is issued, a silently failed write ends the session -
+        # so this failure has to be loud and has to name the cause.
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_bytes(nonce + ct)
-        os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)   # 0600
-        os.replace(tmp, self.path)
+        try:
+            tmp.write_bytes(nonce + ct)
+            os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)   # 0600
+            os.replace(tmp, self.path)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"could not write token file {self.path}: {exc}. Refresh tokens "
+                "are single-use, so a read-only path ends the session on the "
+                "first refresh. Mount it read-write and re-run `tagent auth`."
+            ) from exc
 
     def clear(self) -> None:
         self.path.unlink(missing_ok=True)

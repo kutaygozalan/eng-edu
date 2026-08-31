@@ -425,7 +425,19 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("resume", help="release the kill switch").set_defaults(fn=cmd_resume)
 
     args = p.parse_args(argv)
-    return args.fn(args)
+    try:
+        return args.fn(args)
+    except BrokenPipeError:
+        # Someone piped us into `head`. Not a failure; exiting non-zero here
+        # would fire a spurious alert from the cron wrapper.
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+        return 0
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
