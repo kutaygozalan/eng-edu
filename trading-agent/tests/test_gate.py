@@ -294,3 +294,86 @@ def test_no_override_path_exists():
 )
 def test_size_for_risk(equity, risk_pct, per_unit, expected):
     assert size_for_risk(equity, risk_pct, per_unit) == expected
+
+
+# ------------------------------------------------- pre-check (cost control) --
+# The model call is the dominant running cost. These assert we skip it only when
+# no order could pass anyway - and NEVER when an exit might be needed.
+
+from tagent.risk.gate import can_anything_happen  # noqa: E402
+
+
+def precheck(a=None, m=None, positions=False, min_notional=1.0, limits=LIMITS):
+    return can_anything_happen(a or account(), m or market(), limits,
+                               has_open_positions=positions,
+                               min_viable_notional=min_notional)
+
+
+def test_precheck_allows_a_normal_cycle():
+    assert precheck().can_act
+
+
+def test_precheck_never_skips_when_a_position_is_open():
+    """Delaying an exit to save money is exactly the wrong trade-off."""
+    for state in [
+        account(trades_today=99),
+        account(settled_cash=0.0),
+        account(equity=50_000.0, peak_equity=100_000.0),
+        account(realized_pnl_today=-9_000.0),
+    ]:
+        assert precheck(a=state, positions=True).can_act
+    assert precheck(m=market(kill_switch=True), positions=True).can_act
+    assert precheck(m=market(minutes_until_close=1.0), positions=True).can_act
+
+
+def test_precheck_skips_flat_account_at_daily_cap():
+    r = precheck(a=account(trades_today=8))
+    assert not r.can_act and "daily trade cap" in r.reason
+
+
+def test_precheck_skips_flat_account_without_settled_cash():
+    r = precheck(a=account(settled_cash=0.5), min_notional=100.0)
+    assert not r.can_act and "settled cash" in r.reason
+
+
+def test_precheck_skips_inside_blackout_windows():
+    assert not precheck(m=market(minutes_since_open=3.0)).can_act
+    assert not precheck(m=market(minutes_until_close=5.0)).can_act
+
+
+def test_precheck_skips_when_kill_switch_engaged_and_flat():
+    r = precheck(m=market(kill_switch=True))
+    assert not r.can_act and "kill switch" in r.reason
+
+
+def test_precheck_skips_after_daily_loss_limit():
+    r = precheck(a=account(realized_pnl_today=-3_500.0))
+    assert not r.can_act and "daily loss" in r.reason
+
+
+def test_precheck_skips_after_drawdown_breach():
+    r = precheck(a=account(equity=80_000.0, peak_equity=100_000.0))
+    assert not r.can_act and "drawdown" in r.reason
+
+
+def test_precheck_skips_closed_market():
+    assert not precheck(m=market(is_open=False)).can_act
+
+
+def test_precheck_agrees_with_the_gate():
+    """If the pre-check says stop, a clean entry must indeed be rejected.
+
+    A pre-check that skipped cycles the gate would have allowed would silently
+    suppress real trades.
+    """
+    for state, mkt in [
+        (account(trades_today=8), market()),
+        (account(realized_pnl_today=-3_500.0), market()),
+        (account(equity=80_000.0, peak_equity=100_000.0), market()),
+        (account(), market(minutes_since_open=3.0)),
+        (account(), market(kill_switch=True)),
+    ]:
+        assert not can_anything_happen(
+            state, mkt, LIMITS, has_open_positions=False, min_viable_notional=1.0
+        ).can_act
+        assert not evaluate(proposal(), state, mkt, LIMITS).allowed

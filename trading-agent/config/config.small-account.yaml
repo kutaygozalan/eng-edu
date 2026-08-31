@@ -52,9 +52,15 @@ limits:
   max_data_age_seconds: 120
   allow_reentry_same_day: false
 
+# COST NOTE (matters more than anything else at this account size)
+# The model call, not the VM, is the dominant running expense. At a 20-minute
+# cadence with Opus 5 it runs ~$272/yr - 14% of a $2,000 account, before the
+# agent has made a cent. Hourly costs ~$106/yr (5%), and the research is
+# unambiguous that lower trade frequency IMPROVES retail returns, so this is
+# cheaper and probably better. Revisit the cadence when the account is larger.
 agent:
   model: claude-opus-5
-  interval_minutes: 20
+  interval_minutes: 60
   max_context_lessons: 25
   max_similar_decisions: 5
 

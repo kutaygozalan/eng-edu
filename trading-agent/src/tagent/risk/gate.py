@@ -325,6 +325,69 @@ def _round_trip_cost_pct(p: Proposal) -> float:
     return p.est_spread_pct + fee_pct
 
 
+@dataclass(frozen=True)
+class ActionCheck:
+    can_act: bool
+    reason: str
+
+
+def can_anything_happen(
+    account: AccountState,
+    market: MarketContext,
+    limits: RiskLimits,
+    has_open_positions: bool,
+    min_viable_notional: float,
+) -> ActionCheck:
+    """Could ANY order pass the gate right now?
+
+    A pure precondition check that runs before the model is called. On a
+    20-minute cadence the LLM call is the dominant running cost, and a large
+    share of cycles are provably incapable of producing a trade: the daily cap
+    is spent, the account is flat with no settled cash, we are inside a blackout
+    window. Paying for reasoning in those cycles buys nothing.
+
+    Deliberately conservative in one direction: if any position is open, we
+    always run, because exits must never be delayed to save money. This only
+    ever skips cycles where both entry and exit are impossible.
+    """
+    if has_open_positions:
+        # An exit may be needed, and exits bypass most limits.
+        return ActionCheck(True, "positions open")
+
+    if market.kill_switch:
+        return ActionCheck(False, "kill switch engaged and no positions to close")
+
+    if not market.is_open:
+        return ActionCheck(False, "market closed")
+
+    if market.minutes_since_open < limits.entry_blackout_minutes_open:
+        return ActionCheck(False, "inside opening blackout, nothing to close")
+
+    if market.minutes_until_close < limits.entry_blackout_minutes_close:
+        return ActionCheck(False, "inside closing blackout, nothing to close")
+
+    if account.trades_today >= limits.max_trades_per_day:
+        return ActionCheck(False, "daily trade cap reached and no positions open")
+
+    drawdown = _drawdown_pct(account.equity, account.peak_equity)
+    if drawdown >= limits.max_drawdown_pct:
+        return ActionCheck(False, "drawdown limit breached")
+
+    if account.start_of_day_equity > 0:
+        day_pnl = account.realized_pnl_today + account.unrealized_pnl_today
+        if -day_pnl / account.start_of_day_equity >= limits.daily_loss_limit_pct:
+            return ActionCheck(False, "daily loss limit reached")
+
+    if account.settled_cash < min_viable_notional:
+        return ActionCheck(
+            False,
+            f"settled cash ${account.settled_cash:,.2f} below the smallest "
+            f"viable position (${min_viable_notional:,.2f})",
+        )
+
+    return ActionCheck(True, "")
+
+
 def size_for_risk(
     equity: float,
     risk_per_trade_pct: float,

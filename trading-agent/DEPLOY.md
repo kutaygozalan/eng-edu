@@ -11,21 +11,36 @@ paste Robinhood credentials into a config file or a chat window is wrong.
 
 ## 1. Provision the VM
 
-Any of GCP `e2-small`, Hetzner CX22, or DigitalOcean's $6 droplet works. Debian
-or Ubuntu.
+**Recommended: GCP `e2-micro` in `us-east1`, always-free tier. $0/month.**
 
-**Give it 2GB of RAM, or add swap.** A free-tier `e2-micro` will OOM mid-cycle
-during the model call, and a killed cycle is a missed signal:
+A cycle peaks at **65 MB RSS** — measured, not estimated: interpreter, the
+Anthropic SDK, a 500-decision database, and full context assembly. Against
+1 GB that is comfortable with room to spare, and no swap is needed.
 
-```bash
-sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
-sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
+> An earlier draft of this file warned that a free `e2-micro` would OOM. That
+> came from a report of running **headless Claude Code** (Node plus the whole
+> agent harness) on one. `tagent cycle` is a lean one-shot Python process an
+> order of magnitude smaller. The warning does not apply here.
 
-Set the clock to UTC and let cron handle ET via `CRON_TZ` — mixing timezone
-conversions across cron, the OS, and the code is how a bot ends up trading an
-hour late twice a year.
+The workload is 7 short cycles a day, each spending most of its wall-clock
+waiting on an HTTP response. CPU is nearly irrelevant, so a shared-core
+instance is not a compromise. `us-east1` is closest to both Robinhood's and
+Anthropic's infrastructure.
+
+| Option | Cost | Verdict |
+|---|---|---|
+| **GCP `e2-micro`, us-east1** | **free** | **Recommended.** Free tier covers 1 instance + 30 GB disk, non-preemptible |
+| Hetzner CPX11, Ashburn VA | ~$5/mo | Best paid option: 2 vCPU / 2 GB, US East |
+| DigitalOcean basic | $6/mo | Simplest UX; 1 GB at that price is fine here |
+| Oracle Cloud always-free ARM | free | 24 GB RAM, wildly overprovisioned; Oracle may reclaim idle instances |
+| AWS Lightsail | $5/mo | Fine, no advantage over the above |
+
+**Do not use a spot or preemptible instance.** Saving $3/month is not worth an
+instance vanishing mid-cycle with an order in flight.
+
+Set the OS clock to UTC and let cron handle ET via `CRON_TZ`. Mixing timezone
+conversion across cron, the OS, and application code is how a bot ends up
+trading an hour late twice a year.
 
 ## 2. Install
 
@@ -91,11 +106,45 @@ sudo cp deploy/tagent-run /usr/local/bin/ && sudo chmod +x /usr/local/bin/tagent
 crontab deploy/crontab.example
 ```
 
-18 cycles a day at 20-minute spacing, a review at 17:30, a health check at 08:00.
+7 cycles a day (hourly at :45, with the last pulled to 15:15 to clear the closing
+blackout), a review at 17:30, a health check at 08:00.
 Half-days are handled in code — cron still fires at 13:05 on those days and the
 cycle exits immediately.
 
-## 7. First week
+## 7. Running costs — read this before choosing a cadence
+
+At a $2,000 account, **the model call, not the VM, is the dominant expense**,
+and it is large enough to change the decision:
+
+| Cadence | Calls/yr | Opus 5 API | + free VM | Drag on $2,000 |
+|---|---:|---:|---:|---:|
+| every 20 min | 4,536 | $272 | $272 | **13.6%** |
+| every 30 min | 3,024 | $189 | $189 | 9.5% |
+| **hourly (shipped default)** | **1,512** | **$106** | **$106** | **5.3%** |
+| twice daily | 504 | $50 | $50 | 2.5% |
+
+The 20-minute cadence costs roughly what the best published LLM trading agents
+*return* (~16% annually, live). The agent would have to be world-class just to
+break even on its own electricity bill.
+
+Hourly is the shipped default because it cuts that to 5.3% **and** the evidence
+on trade frequency says fewer decisions improve retail returns. Cheaper and
+probably better is a rare combination; take it.
+
+Two further levers if cost still bites:
+
+- **A pre-check already skips the model** whenever no order could pass the gate
+  anyway — flat account at its daily trade cap, blackout window, kill switch,
+  no settled cash. It never skips while a position is open, because delaying an
+  exit to save money is the wrong trade-off.
+- **`output_config.effort`** is the next lever (`high` → `medium` roughly halves
+  output tokens). Most cycles correctly conclude "no trade," which does not need
+  maximum reasoning depth.
+
+Revisit the cadence as the account grows: at $20,000, hourly Opus is a 0.5%
+drag and the calculus changes completely.
+
+## 8. First week
 
 Leave `dry_run: true`. The agent reasons, proposes, and records every decision
 and every gate rejection, but places no orders.

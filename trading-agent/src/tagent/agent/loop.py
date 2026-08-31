@@ -133,6 +133,26 @@ def run_cycle(cfg: Config, store: Store, broker: Broker) -> CycleReport:
         account, sod_equity, peak, store, day_start, cycle_id
     )
 
+    # Skip the model entirely when no order could pass the gate anyway. On this
+    # cadence the LLM call dominates running cost, and a flat account that has
+    # spent its daily trade budget cannot do anything with the answer.
+    precheck = G.can_anything_happen(
+        account_state,
+        G.MarketContext(
+            now=now, is_open=session.is_open,
+            minutes_since_open=session.minutes_since_open,
+            minutes_until_close=session.minutes_until_close,
+            kill_switch=store.kill_switch,
+        ),
+        cfg.limits,
+        has_open_positions=bool(account.positions) or store.open_lot_count() > 0,
+        min_viable_notional=_min_viable_notional(cfg, quotes),
+    )
+    if not precheck.can_act:
+        store.log("info", "cycle_skipped_precheck", precheck.reason)
+        report.skipped_reason = precheck.reason
+        return report
+
     proposals = _ask_model(cfg, store, session, account, quotes, todays, open_orders, now)
     report.proposed = len(proposals)
 
@@ -453,6 +473,20 @@ def _with_cycle_count(state: G.AccountState, n: int) -> G.AccountState:
     from dataclasses import replace
 
     return replace(state, trades_this_cycle=n)
+
+
+def _min_viable_notional(cfg: Config, quotes: list[Quote]) -> float:
+    """Smallest order that could plausibly be placed.
+
+    Fractional shares make any dollar amount tradeable in equities, so the floor
+    is the risk budget itself. Options come in $100-multiplier contracts, so the
+    floor is one contract of the cheapest thing quoted.
+    """
+    budget = 1.0
+    if any(s for s in cfg.agent.setups if "spread" in s or "condor" in s):
+        cheapest = min((q.mid for q in quotes if q.mid > 0), default=0.0)
+        budget = max(budget, cheapest * 100 * 0.01)
+    return budget
 
 
 def _fetch_quotes(broker: Broker, universe: tuple[str, ...], store: Store) -> list[Quote]:
