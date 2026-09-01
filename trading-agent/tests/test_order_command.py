@@ -8,6 +8,7 @@ kill switch, and a typed confirmation.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -80,7 +81,12 @@ def test_dollars_below_one_share_is_a_clear_error(env, capsys):
     assert rc == 1
     err = capsys.readouterr().err
     assert "does not buy one share" in err
-    assert "200" in err, "the error has to say what it would actually cost"
+
+    # It has to name what a share actually costs, or the operator cannot act on
+    # it. Parsed rather than string-matched: the paper price moves with the
+    # clock, and asserting a literal made this pass or fail by time of day.
+    price = float(re.search(r"at \$([\d,]+\.\d{2})", err).group(1).replace(",", ""))
+    assert price > 10
 
 
 def test_the_kill_switch_blocks_a_new_entry(env, capsys):

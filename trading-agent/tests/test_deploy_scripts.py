@@ -188,6 +188,49 @@ def test_deploy_runs_outside_the_hours_pull_deploy_itself_refuses():
     assert not (9 <= hour < 17), f"cron fires at {hour}:{minute:02d} ET, inside the refusal window"
 
 
+def test_cron_cadence_matches_the_shipped_config():
+    """cron and `agent.interval_minutes` have to agree.
+
+    They did not for a while: cron fired every 20 minutes against an hourly
+    config. Nothing broke, which is the problem - it just quietly cost three
+    times the model spend the config asked for, and the only symptom was a
+    number on a bill nobody was reading.
+    """
+    import re
+
+    cfg = (DEPLOY.parent / "config" / "config.small-account.yaml").read_text()
+    interval = int(re.search(r"interval_minutes:\s*(\d+)", cfg).group(1))
+
+    slots: list[int] = []
+    for line in (DEPLOY / "crontab.example").read_text().splitlines():
+        if line.startswith("#") or "tagent-run cycle" not in line:
+            continue
+        minutes, hours = line.split()[0], line.split()[1]
+        for h in _expand(hours):
+            for m in _expand(minutes):
+                slots.append(h * 60 + m)
+
+    slots.sort()
+    assert slots, "no cycle lines found in the crontab"
+    gaps = [b - a for a, b in zip(slots, slots[1:])]
+    assert min(gaps) >= interval, (
+        f"cron fires {min(gaps)} minutes apart but the config asks for "
+        f"{interval}; that is {interval / min(gaps):.1f}x the intended spend"
+    )
+
+
+def _expand(field: str) -> list[int]:
+    """Expand one cron field: '5,25', '10-14', '*/2' is not used here."""
+    out: list[int] = []
+    for part in field.split(","):
+        if "-" in part:
+            lo, hi = (int(x) for x in part.split("-"))
+            out.extend(range(lo, hi + 1))
+        else:
+            out.append(int(part))
+    return out
+
+
 def test_bootstrap_installs_the_dispatcher():
     body = (DEPLOY / "bootstrap.sh").read_text()
     assert "cp \"$APP_DIR/deploy/tagent-run-script\" /usr/local/bin/tagent-run-script" in body

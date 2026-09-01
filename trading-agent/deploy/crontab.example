@@ -1,13 +1,24 @@
 # Trading agent schedule. Times are ET; CRON_TZ makes DST someone else's problem.
 CRON_TZ=America/New_York
 
-# Trading cycles every 20 minutes, 09:45 -> 15:25, weekdays.
-# The first slot is 09:45 (clears the 15-minute opening blackout) and the last
-# is 15:25 (clears the 20-minute closing blackout). The gate enforces both
-# regardless, but there is no point paying for an LLM call that cannot trade.
-45      9     * * 1-5   /usr/local/bin/tagent-run cycle >> /var/log/tagent/cycle.log 2>&1
-5,25,45 10-14 * * 1-5   /usr/local/bin/tagent-run cycle >> /var/log/tagent/cycle.log 2>&1
-5,25    15    * * 1-5   /usr/local/bin/tagent-run cycle >> /var/log/tagent/cycle.log 2>&1
+# Trading cycles HOURLY at :45, 09:45 -> 14:45, weekdays. Six a day.
+#
+# This must match `agent.interval_minutes` in the config (60). It did not for a
+# while - cron fired every 20 minutes against an hourly config, which is three
+# times the model spend the config asks for: ~$272/yr instead of ~$106/yr, or
+# 13.6% of a $2,000 account instead of 5.3%. tests/test_deploy_scripts.py now
+# fails if the two drift apart again.
+#
+# The first slot clears the 15-minute opening blackout. There is no 15:45 slot
+# because it would fall inside the 20-minute closing blackout and the gate would
+# reject it - an LLM call billed for a trade that cannot be placed.
+#
+# Six a day is 1,512 calls a year, which is exactly the figure the cost table in
+# DEPLOY.md section 7 quotes for hourly.
+#
+# To go back to 20 minutes, set interval_minutes: 20 in the config FIRST, then
+# use: 45 9 * * 1-5 / 5,25,45 10-14 * * 1-5 / 5,25 15 * * 1-5
+45 9-14 * * 1-5         /usr/local/bin/tagent-run cycle >> /var/log/tagent/cycle.log 2>&1
 
 # Nightly review - the journal. Once, after the close.
 30 17 * * 1-5           /usr/local/bin/tagent-run review >> /var/log/tagent/review.log 2>&1

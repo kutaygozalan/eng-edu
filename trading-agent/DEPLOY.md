@@ -153,7 +153,8 @@ sudo chmod +x /usr/local/bin/tagent-run /usr/local/bin/tagent-run-script
 crontab deploy/crontab.example
 ```
 
-Trading cycles through the session, a review at 17:30, a health check at 08:00,
+Six trading cycles a day, hourly at :45 from 09:45 to 14:45 (matching
+`agent.interval_minutes: 60`), a review at 17:30, a health check at 08:00,
 and after the close the self-maintenance pair: a status publish at 17:45 and a
 pull-deploy at 18:30 (section 9).
 Half-days are handled in code — cron still fires at 13:05 on those days and the
