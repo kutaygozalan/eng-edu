@@ -64,6 +64,10 @@ ANTHROPIC_API_KEY=REPLACE_ME
 TAGENT_TOKEN_KEY=$KEY
 # Optional: a Slack/Discord webhook for auth-expiry and failure alerts.
 TAGENT_ALERT_WEBHOOK=
+# Optional: a fine-grained PAT (contents:write, THIS REPO ONLY) for
+# publish-status.sh. Without it the nightly status publish is skipped; nothing
+# else is affected.
+TAGENT_STATUS_TOKEN=
 ENV
     sudo chmod 600 "$ENV_FILE"
     sudo chown "$USER" "$ENV_FILE"
@@ -72,6 +76,10 @@ fi
 
 sudo cp "$APP_DIR/deploy/tagent-run" /usr/local/bin/tagent-run
 sudo chmod +x /usr/local/bin/tagent-run
+
+# The dispatcher for the deploy-side shell scripts (pull-deploy, publish-status).
+sudo cp "$APP_DIR/deploy/tagent-run-script" /usr/local/bin/tagent-run-script
+sudo chmod +x /usr/local/bin/tagent-run-script
 
 cat <<EOF
 

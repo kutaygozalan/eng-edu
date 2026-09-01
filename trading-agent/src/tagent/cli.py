@@ -9,6 +9,8 @@ Subcommands are the operational surface:
     tagent cycle      one trading cycle (run every 20 minutes)
     tagent review     nightly journal (run after the close)
     tagent status     what the agent knows and has done
+    tagent telemetry  operational JSON, redacted for publication
+    tagent order      place ONE order by hand (the smoke test before trusting it)
     tagent kill       engage the kill switch
     tagent resume     release it (deliberately manual)
 """
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,7 +51,15 @@ def _broker(cfg: cfgmod.Config):
         client = MCPClient(cfg.broker.mcp_url, tokens, refresher=_make_refresher(cfg))
         return RobinhoodMCPBroker(client)
     if kind == "paper":
-        sys.exit("the paper broker is not implemented yet; use robinhood_mcp")
+        from .brokers.paper import PaperBroker
+
+        b = cfg.broker
+        return PaperBroker(
+            b.paper_state_file, seed=b.paper_seed,
+            starting_cash=b.paper_starting_cash, spread_pct=b.paper_spread_pct,
+            vol=b.paper_vol, settle_days=b.paper_settle_days,
+            base_prices=b.paper_base_prices,
+        )
     sys.exit(f"unknown broker kind: {kind}")
 
 
@@ -165,6 +176,14 @@ def cmd_doctor(args) -> int:
     print(f"broker:   {cfg.broker.kind} (dry_run={cfg.dry_run})")
     print(f"universe: {', '.join(cfg.agent.universe) or '(unrestricted)'}")
     print(f"setups:   {', '.join(cfg.agent.setups) or '(none)'}")
+
+    if cfg.broker.kind == "paper":
+        warnings.append(
+            "broker is `paper`: prices are synthetic, so nothing learned here "
+            "transfers to a live account. Keep db_path separate from the real "
+            "one, or the agent carries beliefs learned from a random number "
+            "generator into the account with money in it."
+        )
 
     if not cfg.agent.setups:
         problems.append("no setups configured; every proposal will be unattributable")
@@ -370,6 +389,156 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_telemetry(args) -> int:
+    """Machine-readable operational state, safe to publish by default.
+
+    `status` is for a human at a terminal; this is for a future session reading
+    a file out of git with no shell access. The difference that matters is
+    redaction: see tagent/telemetry.py for why the default carries no money and
+    no symbols.
+    """
+    from . import telemetry
+
+    cfg = _load(args)
+    store = _store(cfg)
+    payload = telemetry.collect(
+        cfg, store,
+        include_financials=args.include_financials,
+        window_days=args.window_days,
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_order(args) -> int:
+    """Place a single order by hand.
+
+    This is the rung between `tagent auth` says you are connected and trusting
+    the agent to trade unattended. Until one real order has gone out and come
+    back as a fill, nothing has verified that the broker binding resolves to
+    what you think it does - and Robinhood has changed its MCP tool surface
+    twice, so `place_order` resolving to the wrong tool is a real failure mode
+    rather than a hypothetical one.
+
+    An operator order deliberately does NOT go through the risk gate. The gate
+    governs the agent: it is what stands between a persuasive thesis and a
+    blown account, and it is built to have no override path. A human typing a
+    symbol is not the thing it defends against, and routing this through it
+    would mean inventing a fake setup tag and a fake edge estimate to satisfy
+    checks that exist to police the LLM. What it DOES do is record the order in
+    the ledger, so reconciliation books the fill, the lot is tracked, and the
+    outcome lands in the same statistics as everything else - tagged `manual`,
+    so it never contaminates a setup's measured expectancy.
+    """
+    from .brokers.base import OrderRequest
+
+    cfg = _load(args)
+    store = _store(cfg)
+    broker = _broker(cfg)
+
+    if store.kill_switch and args.side in ("buy", "buy_to_open"):
+        print(f"kill switch is ENGAGED: {store.get_state('kill_switch_reason')}",
+              file=sys.stderr)
+        print("New entries are blocked. Release it with `tagent resume` first.",
+              file=sys.stderr)
+        return 1
+
+    try:
+        quote = broker.quote(args.symbol)
+    except AuthExpired as exc:
+        print(f"AUTH EXPIRED: {exc}\nRun `tagent auth` first.", file=sys.stderr)
+        return 2
+    except BrokerError as exc:
+        print(f"no quote for {args.symbol}: {exc}", file=sys.stderr)
+        return 1
+
+    session = clock.session(datetime.now(timezone.utc))
+    limit = args.limit_price
+    if limit is None:
+        # A marketable limit, not a market order: this caps what a test trade
+        # can cost if the quote is stale or the book is thin.
+        limit = round(quote.ask * 1.005 if args.side.startswith("buy")
+                      else quote.bid * 0.995, 2)
+
+    if args.dollars is not None:
+        quantity = math.floor(args.dollars / limit)
+        if quantity < 1:
+            print(
+                f"${args.dollars:,.2f} does not buy one share of "
+                f"{args.symbol.upper()} at ${limit:,.2f}.\n"
+                f"Raise --dollars to at least ${math.ceil(limit):,.0f}, or pick "
+                "a lower-priced symbol.",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        quantity = args.quantity
+
+    notional = quantity * limit
+    acct = broker.account()
+    pct = notional / acct.equity if acct.equity else 0.0
+
+    print(f"\n  {args.side.upper()} {quantity:g} {args.symbol.upper()} "
+          f"limit ${limit:,.2f}")
+    print(f"  quote        bid ${quote.bid:,.2f} / ask ${quote.ask:,.2f} "
+          f"(spread {quote.spread_pct:.2%})")
+    print(f"  notional     ${notional:,.2f}  =  {pct:.2%} of ${acct.equity:,.2f} equity")
+    print(f"  settled cash ${acct.settled_cash:,.2f}")
+    print(f"  broker       {cfg.broker.kind}   dry_run={cfg.dry_run}")
+    if not session.is_open:
+        print(f"  WARNING      market is closed ({session.reason}); this will rest, "
+              "not fill")
+    print("  NOTE         operator order - the risk gate does NOT apply\n")
+
+    if cfg.dry_run:
+        print("dry_run is true in config: nothing was sent.")
+        print("Set dry_run: false to place real orders.")
+        return 0
+
+    if not args.yes:
+        confirm = f"{args.side} {quantity:g} {args.symbol.upper()}"
+        if input(f"Type '{confirm}' to place this order: ").strip() != confirm:
+            print("aborted; nothing sent")
+            return 1
+
+    decision_id = store.record_decision(
+        cycle_id=f"manual-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}",
+        symbol=args.symbol.upper(), asset_class="equity", side=args.side,
+        quantity=quantity, order_type="limit", limit_price=limit,
+        notional=notional, setup_tag="manual", confidence=0.5,
+        thesis=args.note, gate_verdict="manual",
+        gate_reasons=["operator_order"], features={"max_loss": notional},
+    )
+
+    try:
+        placed = broker.place_order(OrderRequest(
+            symbol=args.symbol.upper(), asset_class="equity", side=args.side,
+            quantity=quantity, order_type="limit", limit_price=limit,
+            client_tag=str(decision_id),
+        ))
+    except AuthExpired as exc:
+        store.set_status(decision_id, "failed")
+        store.log("critical", "auth_expired", str(exc))
+        print(f"AUTH EXPIRED: {exc}", file=sys.stderr)
+        return 2
+    except BrokerError as exc:
+        store.set_status(decision_id, "failed")
+        store.log("error", "manual_order_failed", str(exc))
+        print(f"REJECTED: {exc}", file=sys.stderr)
+        return 1
+
+    store.mark_submitted(decision_id, placed.broker_order_id)
+    store.log("warn", "manual_order",
+              f"{args.side} {quantity:g} {args.symbol.upper()} @ {limit}")
+
+    print(f"\nsent: order {placed.broker_order_id}  status={placed.status}"
+          f"  filled={placed.filled_quantity:g}")
+    print(f"ledger decision id {decision_id}")
+    print("\nRun `tagent cycle` or wait for the next scheduled one to reconcile "
+          "the fill,\nthen `tagent status` to see the lot.")
+    return 0
+
+
 def cmd_kill(args) -> int:
     cfg = _load(args)
     store = _store(cfg)
@@ -417,6 +586,30 @@ def main(argv: list[str] | None = None) -> int:
                     help="statistics only; skip the LLM journal step")
     rv.set_defaults(fn=cmd_review)
     sub.add_parser("status", help="what the agent knows").set_defaults(fn=cmd_status)
+
+    tm = sub.add_parser("telemetry", help="operational JSON for publication")
+    tm.add_argument(
+        "--include-financials", action="store_true",
+        help="add P&L and equity. NOT safe to publish to a public repository.",
+    )
+    tm.add_argument("--window-days", type=int, default=7,
+                    help="lookback for event and rejection counts (default 7)")
+    tm.set_defaults(fn=cmd_telemetry)
+
+    o = sub.add_parser("order", help="place ONE order by hand (smoke test)")
+    o.add_argument("symbol")
+    size = o.add_mutually_exclusive_group(required=True)
+    size.add_argument("--dollars", type=float, help="spend about this much")
+    size.add_argument("--quantity", type=float, help="this many shares")
+    o.add_argument("--side", default="buy",
+                   choices=["buy", "sell", "buy_to_open", "sell_to_close"])
+    o.add_argument("--limit-price", type=float,
+                   help="default: a marketable limit 0.5%% through the touch")
+    o.add_argument("--note", default="manual smoke test",
+                   help="why, recorded in the ledger")
+    o.add_argument("--yes", action="store_true",
+                   help="skip the typed confirmation (for scripts)")
+    o.set_defaults(fn=cmd_order)
 
     k = sub.add_parser("kill", help="engage the kill switch")
     k.add_argument("reason")

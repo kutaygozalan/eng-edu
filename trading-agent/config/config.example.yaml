@@ -18,6 +18,18 @@ broker:
   mcp_url: https://agent.robinhood.com/mcp/trading
   token_file: ~/.tagent/robinhood-tokens.enc
 
+  # --- paper broker only ---------------------------------------------------
+  # Prices are synthetic and reproducible from the seed. This exercises the
+  # loop end to end without a live account; it is NOT a backtest, and a P&L
+  # number produced here means nothing. Point db_path somewhere separate.
+  paper_state_file: ~/.tagent/paper-state.json
+  paper_seed: 7               # same seed, same market, on any machine
+  paper_starting_cash: 2000.0
+  paper_spread_pct: 0.0008    # every fill crosses this
+  paper_vol: 0.02             # rough daily swing, as a fraction
+  paper_settle_days: 1        # T+1, so settled_cash actually lags
+  paper_base_prices: {}       # e.g. {SPY: 580.0} to anchor a symbol
+
 limits:
   # Sizing is measured on MAX LOSS, not notional, so a defined-risk spread is
   # sized by what it can actually cost you.
